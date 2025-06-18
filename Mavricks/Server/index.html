@@ -1,0 +1,267 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Telemetry for Windows Client</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+        }
+
+        header {
+            background-color: #007bff;
+            color: white;
+            text-align: center;
+            padding: 15px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        nav {
+            background: #f8f9fa;
+            padding: 10px;
+            font-weight: bold;
+        }
+
+        .container {
+            display: flex;
+        }
+
+        .sidebar {
+            width: 15%;
+            background-color: #f1f1f1;
+            padding: 15px;
+            font-weight: bold;
+        }
+
+        .content {
+            width: 85%;
+            padding: 20px;
+        }
+
+        .charts {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+
+        .chart-box {
+            width: 45%;
+            height: 300px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th, td {
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        .safe {
+            color: green;
+        }
+
+        .unsafe {
+            color: red;
+        }
+
+        .pdf-button {
+            margin-top: 20px;
+            float: right;
+            padding: 10px 20px;
+            background-color: green;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        h2 {
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+    <header>Telemetry for Windows Client</header>
+    <nav align="center">Menu</nav>
+    <div class="container">
+        <div class="sidebar">Sidebar</div>
+        <div class="content" id="dashboard">
+            <div class="charts">
+                <div class="chart-box">
+                    <h3 align="center">Operation Safety Distribution</h3>
+                    <canvas id="pieChart"></canvas>
+                </div>
+                <div class="chart-box">
+                    <h3 align="center">Operation Safety Count</h3>
+                    <canvas id="barChart"></canvas>
+                </div>
+            </div>
+
+            <h2>Telemetry Data</h2>
+            <table id="logTable">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>IP Address</th>
+                        <th>Username</th>
+                        <th>Operation Type</th>
+                        <th>Safety Status</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <button class="pdf-button" onclick="exportPDF()">Export to PDF</button>
+        </div>
+    </div>
+
+    <script>
+        let pieChart, barChart;
+
+        async function fetchLogs() {
+            const response = await fetch('/data');
+            const raw = await response.text();
+            const lines = raw.trim().split('\n').filter(line => line.trim() !== '');
+            const tbody = document.querySelector("#logTable tbody");
+            tbody.innerHTML = '';
+
+            let safe = 0, unsafe = 0, invalid = 0;
+
+            lines.forEach(line => {
+                try {
+                    const log = JSON.parse(line);
+                    const row = document.createElement('tr');
+                    let statusHTML = '';
+                    if (log.safe === "true" || log.safe === true) {
+                        statusHTML = `<span class="safe">✅ Safe</span>`;
+                        safe++;
+                    } else if (log.safe === "false" || log.safe === false) {
+                        statusHTML = `<span class="unsafe">❌ Unsafe</span>`;
+                        unsafe++;
+                    } else {
+                        statusHTML = `<span style="color:orange;">⚠️ Invalid</span>`;
+                        invalid++;
+                    }
+
+                    row.innerHTML = `
+                        <td>${log.timestamp}</td>
+                        <td>${log.ip}</td>
+                        <td>${log.user}</td>
+                        <td>${log.operation_type}</td>
+                        <td>${statusHTML}</td>
+                    `;
+                    tbody.appendChild(row);
+                } catch (err) {
+                    console.error("Invalid JSON line:", line);
+                }
+            });
+
+            updateCharts(safe, unsafe, invalid);
+        }
+
+        function updateCharts(safe, unsafe, invalid) {
+            const labels = ['Safe', 'Unsafe', 'Invalid'];
+            const data = [safe, unsafe, invalid];
+            const colors = ['#28a745', '#dc3545', '#ffc107'];
+
+            if (pieChart) pieChart.destroy();
+            if (barChart) barChart.destroy();
+
+            const pieCtx = document.getElementById('pieChart');
+            pieChart = new Chart(pieCtx, {
+                type: 'pie',
+                data: {
+                    labels,
+                    datasets: [{
+                        data,
+                        backgroundColor: colors
+                    }]
+                },
+                options: {
+                    responsive: true
+                }
+            });
+
+            const barCtx = document.getElementById('barChart');
+            barChart = new Chart(barCtx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Operations',
+                        data,
+                        backgroundColor: colors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+
+        function exportPDF() {
+            const element = document.getElementById('dashboard');
+            const pieCanvas = document.getElementById('pieChart');
+            const barCanvas = document.getElementById('barChart');
+
+            // Convert canvas to images
+            const pieImage = new Image();
+            pieImage.src = pieCanvas.toDataURL("image/png");
+
+            const barImage = new Image();
+            barImage.src = barCanvas.toDataURL("image/png");
+
+            // Store original canvas elements
+            const pieParent = pieCanvas.parentNode;
+            const barParent = barCanvas.parentNode;
+
+            // Replace canvas with image
+            pieParent.replaceChild(pieImage, pieCanvas);
+            barParent.replaceChild(barImage, barCanvas);
+
+            // Wait a moment to render images
+            setTimeout(() => {
+                const opt = {
+                    margin: 0.5,
+                    filename: 'telemetry_report.pdf',
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+                };
+
+                html2pdf().set(opt).from(element).save().then(() => {
+                    // Restore original canvas after PDF export
+                    pieParent.replaceChild(pieCanvas, pieImage);
+                    barParent.replaceChild(barCanvas, barImage);
+                });
+            }, 500); // Allow DOM to update
+        }
+
+
+        fetchLogs();
+        setInterval(fetchLogs, 5000); // refresh every 5s
+    </script>
+</body>
+</html>
